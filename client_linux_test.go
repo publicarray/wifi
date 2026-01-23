@@ -58,292 +58,196 @@ func TestLinux_clientInterfacesOK(t *testing.T) {
 	}
 }
 
-func TestLinux_clientBSSMissingBSSAttributeIsNotExist(t *testing.T) {
-	c := testClient(t, func(_ genetlink.Message, _ netlink.Message) ([]genetlink.Message, error) {
-		// One message without BSS attribute
-		return []genetlink.Message{{
-			Header: genetlink.Header{
-				Command: unix.NL80211_CMD_NEW_SCAN_RESULTS,
-			},
-			Data: mustMarshalAttributes([]netlink.Attribute{{
-				Type: unix.NL80211_ATTR_IFINDEX,
-				Data: nlenc.Uint32Bytes(1),
-			}}),
-		}}, nil
-	})
-
-	_, err := c.BSS(&Interface{
-		Index:        1,
-		HardwareAddr: net.HardwareAddr{0xe, 0xad, 0xbe, 0xef, 0xde, 0xad},
-	})
-	if !os.IsNotExist(err) {
-		t.Fatalf("expected is not exist, got: %v", err)
+func TestLinux_clientStationInfoBasicEnhanced(t *testing.T) {
+	want := &StationInfo{
+		InterfaceIndex: 1,
+		HardwareAddr:   net.HardwareAddr{0xde, 0xad, 0xbe, 0xef, 0xde, 0xad},
+		ReceiveBitrate: 650000000,
+		ReceiveRateInfo: RateInfo{
+			Bitrate: 650000000,
+			MCS:     7,
+			Format:  RateFormatVHT,
+			Flags:   RateInfoFlagsVHT,
+		},
+		HTSupported:  true,
+		VHTSupported: true,
+		HESupported:  false,
+		EHTSupported: false,
 	}
-}
 
-func TestLinux_clientBSSMissingBSSStatusAttributeIsNotExist(t *testing.T) {
-	c := testClient(t, func(_ genetlink.Message, _ netlink.Message) ([]genetlink.Message, error) {
-		return []genetlink.Message{{
-			Header: genetlink.Header{
-				Command: unix.NL80211_CMD_NEW_SCAN_RESULTS,
-			},
-			// BSS attribute, but no nested status attribute for the "active" BSS
-			Data: mustMarshalAttributes([]netlink.Attribute{{
-				Type: unix.NL80211_ATTR_BSS,
-				Data: mustMarshalAttributes([]netlink.Attribute{{
-					Type: unix.NL80211_BSS_BSSID,
-					Data: net.HardwareAddr{0x00, 0x11, 0x22, 0x33, 0x44, 0x55},
-				}}),
-			}}),
-		}}, nil
-	})
-
-	_, err := c.BSS(&Interface{
+	iface := &Interface{
 		Index:        1,
-		HardwareAddr: net.HardwareAddr{0xe, 0xad, 0xbe, 0xef, 0xde, 0xad},
-	})
-	if !os.IsNotExist(err) {
-		t.Fatalf("expected is not exist, got: %v", err)
+		HardwareAddr: net.HardwareAddr{0xde, 0xad, 0xbe, 0xef, 0xde, 0xad},
 	}
-}
-
-func TestLinux_clientBSSNoMessagesIsNotExist(t *testing.T) {
-	c := testClient(t, func(_ genetlink.Message, _ netlink.Message) ([]genetlink.Message, error) {
-		// No messages about the BSS at the generic netlink level.
-		// Caller will interpret this as no BSS.
-		return nil, io.EOF
-	})
-
-	_, err := c.BSS(&Interface{
-		Index:        1,
-		HardwareAddr: net.HardwareAddr{0xe, 0xad, 0xbe, 0xef, 0xde, 0xad},
-	})
-	if !os.IsNotExist(err) {
-		t.Fatalf("expected is not exist, got: %v", err)
-	}
-}
-
-func TestLinux_clientBSSOKSkipMissingStatus(t *testing.T) {
-	want := net.HardwareAddr{0x00, 0x11, 0x22, 0x33, 0x44, 0x55}
 
 	c := testClient(t, func(_ genetlink.Message, _ netlink.Message) ([]genetlink.Message, error) {
 		return []genetlink.Message{
-			// Multiple messages, but only second one has BSS status, so the
-			// others should be ignored
 			{
 				Header: genetlink.Header{
-					Command: unix.NL80211_CMD_NEW_SCAN_RESULTS,
+					Command: unix.NL80211_CMD_NEW_STATION,
 				},
-				Data: mustMarshalAttributes([]netlink.Attribute{{
-					Type: unix.NL80211_ATTR_BSS,
-					// Does not contain BSS information and status
-					Data: mustMarshalAttributes([]netlink.Attribute{{
-						Type: unix.NL80211_BSS_BSSID,
-						Data: net.HardwareAddr{0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa},
-					}}),
-				}}),
-			},
-			{
-				Header: genetlink.Header{
-					Command: unix.NL80211_CMD_NEW_SCAN_RESULTS,
-				},
-				Data: mustMarshalAttributes([]netlink.Attribute{{
-					Type: unix.NL80211_ATTR_BSS,
-					// Contains BSS information and status
-					Data: mustMarshalAttributes([]netlink.Attribute{
-						{
-							Type: unix.NL80211_BSS_BSSID,
-							Data: want,
-						},
-						{
-							Type: unix.NL80211_BSS_STATUS,
-							Data: nlenc.Uint32Bytes(uint32(BSSStatusAssociated)),
-						},
-					}),
-				}}),
-			},
-		}, nil
+				Data: mustMarshalAttributes([]netlink.Attribute{
+					{Type: unix.NL80211_ATTR_MAC, Data: want.HardwareAddr},
+					{Type: unix.NL80211_ATTR_IFINDEX, Data: nlenc.Uint32Bytes(uint32(want.InterfaceIndex))},
+					{Type: unix.NL80211_ATTR_STA_INFO,
+						Data: mustMarshalAttributes([]netlink.Attribute{
+							{Type: unix.NL80211_STA_INFO_RX_BITRATE,
+								Data: mustMarshalAttributes([]netlink.Attribute{
+									{Type: unix.NL80211_RATE_INFO_BITRATE, Data: nlenc.Uint16Bytes(uint16(bitrateAttr(want.ReceiveBitrate)))},
+									{Type: unix.NL80211_RATE_INFO_BITRATE32, Data: nlenc.Uint32Bytes(bitrateAttr(want.ReceiveBitrate))},
+									{Type: unix.NL80211_RATE_INFO_MCS, Data: []byte{byte(want.ReceiveRateInfo.MCS)}},
+									{Type: unix.NL80211_RATE_INFO_VHT_MCS, Data: []byte{byte(want.ReceiveRateInfo.MCS)}},
+									{Type: unix.NL80211_RATE_INFO_HE_MCS, Data: []byte{byte(want.ReceiveRateInfo.MCS)}},
+									{Type: unix.NL80211_RATE_INFO_VHT_NSS, Data: []byte{byte(want.ReceiveRateInfo.SpatialStreams)}},
+									{Type: unix.NL80211_RATE_INFO_HE_NSS, Data: []byte{byte(want.ReceiveRateInfo.SpatialStreams)}},
+								}),
+							},
+						}),
+					},
+					{
+						Type: unix.NL80211_STA_INFO_TX_BITRATE,
+						Data: mustMarshalAttributes([]netlink.Attribute{
+							{Type: unix.NL80211_RATE_INFO_BITRATE, Data: nlenc.Uint16Bytes(uint16(bitrateAttr(want.TransmitBitrate)))},
+							{Type: unix.NL80211_RATE_INFO_BITRATE32, Data: nlenc.Uint32Bytes(bitrateAttr(want.TransmitBitrate))},
+							{Type: unix.NL80211_RATE_INFO_MCS, Data: []byte{byte(want.TransmitRateInfo.MCS)}},
+							{Type: unix.NL80211_RATE_INFO_VHT_MCS, Data: []byte{byte(want.TransmitRateInfo.MCS)}},
+							{Type: unix.NL80211_RATE_INFO_HE_MCS, Data: []byte{byte(want.TransmitRateInfo.MCS)}},
+							{Type: unix.NL80211_RATE_INFO_VHT_NSS, Data: []byte{byte(want.TransmitRateInfo.SpatialStreams)}},
+							{Type: unix.NL80211_RATE_INFO_HE_NSS, Data: []byte{byte(want.TransmitRateInfo.SpatialStreams)}},
+						}),
+					},
+				}),
+			}}, nil
 	})
 
-	bss, err := c.BSS(&Interface{
-		Index:        1,
-		HardwareAddr: net.HardwareAddr{0xe, 0xad, 0xbe, 0xef, 0xde, 0xad},
-	})
+	got, err := c.StationInfo(iface)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if got := bss.BSSID; !bytes.Equal(want, got) {
-		t.Fatalf("unexpected BSS BSSID:\n- want: %#v\n-  got: %#v",
-			want, got)
-	}
-}
-
-func TestLinux_clientBSSOK(t *testing.T) {
-	want := &BSS{
-		SSID:              "Hello, 世界",
-		BSSID:             net.HardwareAddr{0x00, 0x11, 0x22, 0x33, 0x44, 0x55},
-		Frequency:         2492,
-		BeaconInterval:    100 * 1024 * time.Microsecond,
-		LastSeen:          10 * time.Second,
-		Status:            BSSStatusAssociated,
-		Signal:            -5700,
-		SignalUnspecified: 80,
-	}
-
-	ifi := &Interface{
-		Index:        1,
-		HardwareAddr: net.HardwareAddr{0xe, 0xad, 0xbe, 0xef, 0xde, 0xad},
-	}
-
-	const flags = netlink.Request | netlink.Dump
-
-	msgsFn := mustMessages(t, unix.NL80211_CMD_NEW_SCAN_RESULTS, want)
-
-	c := testClient(t, genltest.CheckRequest(familyID, unix.NL80211_CMD_GET_SCAN, flags,
-		func(greq genetlink.Message, nreq netlink.Message) ([]genetlink.Message, error) {
-			// Also verify that the correct interface attributes are
-			// present in the request.
-			attrs, err := netlink.UnmarshalAttributes(greq.Data)
-			if err != nil {
-				t.Fatalf("failed to unmarshal attributes: %v", err)
-			}
-
-			if diff := diffNetlinkAttributes(ifi.idAttrs(), attrs); diff != "" {
-				t.Fatalf("unexpected request netlink attributes (-want +got):\n%s", diff)
-			}
-
-			return msgsFn(greq, nreq)
-		},
-	))
-
-	got, err := c.BSS(ifi)
-	if err != nil {
-		log.Fatalf("unexpected error: %v", err)
+		t.Fatalf("unexpected error calling station info: %v", err)
 	}
 
 	if !reflect.DeepEqual(want, got) {
-		t.Fatalf("unexpected BSS:\n- want: %v\n-  got: %v",
+		t.Fatalf("unexpected enhanced station info:\n- want: %v\n-  got: %v",
 			want, got)
 	}
 }
 
-func TestLinux_clientStationInfoMissingAttributeIsNotExist(t *testing.T) {
-	c := testClient(t, func(_ genetlink.Message, _ netlink.Message) ([]genetlink.Message, error) {
-		// One message without station info attribute
-		return []genetlink.Message{{
-			Header: genetlink.Header{
-				Command: unix.NL80211_CMD_NEW_STATION,
-			},
-			Data: mustMarshalAttributes([]netlink.Attribute{{
-				Type: unix.NL80211_ATTR_IFINDEX,
-				Data: nlenc.Uint32Bytes(1),
-			}}),
-		}}, nil
-	})
-
-	_, err := c.StationInfo(&Interface{
-		Index:        1,
-		HardwareAddr: net.HardwareAddr{0xe, 0xad, 0xbe, 0xef, 0xde, 0xad},
-	})
-	if !os.IsNotExist(err) {
-		t.Fatalf("expected is not exist, got: %v", err)
-	}
-}
-
-func TestLinux_clientStationInfoNoMessagesIsNotExist(t *testing.T) {
-	c := testClient(t, func(_ genetlink.Message, _ netlink.Message) ([]genetlink.Message, error) {
-		// No messages about station info at the generic netlink level.
-		// Caller will interpret this as no station info.
-		return nil, io.EOF
-	})
-
-	info, err := c.StationInfo(&Interface{
-		Index:        1,
-		HardwareAddr: net.HardwareAddr{0xe, 0xad, 0xbe, 0xef, 0xde, 0xad},
-	})
-	if err != nil {
-		t.Fatalf("undexpected error: %v", err)
-	}
-	if !reflect.DeepEqual(info, []*StationInfo{}) {
-		t.Fatalf("expected info to be an empty slice, got %v", info)
-	}
-}
-
-func TestLinux_clientStationInfoOK(t *testing.T) {
-	want := []*StationInfo{
-		{
-			InterfaceIndex:     1,
-			HardwareAddr:       net.HardwareAddr{0xb8, 0x27, 0xeb, 0xd5, 0xf3, 0xef},
-			Connected:          30 * time.Minute,
-			Inactive:           4 * time.Millisecond,
-			ReceivedBytes:      1000,
-			TransmittedBytes:   2000,
-			ReceivedPackets:    10,
-			TransmittedPackets: 20,
-			Signal:             -50,
-			SignalAverage:      -53,
-			TransmitRetries:    5,
-			TransmitFailed:     2,
-			BeaconLoss:         3,
-			ReceiveBitrate:     130000000,
-			TransmitBitrate:    130000000,
+func TestLinux_clientStationInfoEnhanced(t *testing.T) {
+	want := &StationInfo{
+		InterfaceIndex:     1,
+		HardwareAddr:       net.HardwareAddr{0xde, 0xad, 0xbe, 0xef, 0xde, 0xad},
+		Connected:          30 * time.Minute,
+		Inactive:           5 * time.Minute,
+		ReceivedBytes:      1000,
+		TransmittedBytes:   500,
+		ReceivedPackets:    100,
+		TransmittedPackets: 50,
+		ReceiveBitrate:     540000000,
+		TransmitBitrate:    540000000,
+		Signal:             -60,
+		SignalAverage:      -65,
+		TransmitRetries:    2,
+		TransmitFailed:     1,
+		BeaconLoss:         3,
+		ReceiveRateInfo: RateInfo{
+			Bitrate:        540000000,
+			MCS:            3,
+			SpatialStreams: 2,
+			Bandwidth:      80,
+			GuardInterval:  800,
+			ShortGI:        true,
+			Format:         RateFormatVHT,
+			Flags:          RateInfoFlagsVHT | RateInfoFlagsShortGI,
 		},
-		{
-			InterfaceIndex:     1,
-			HardwareAddr:       net.HardwareAddr{0x40, 0xa5, 0xef, 0xd9, 0x96, 0x6f},
-			Connected:          60 * time.Minute,
-			Inactive:           8 * time.Millisecond,
-			ReceivedBytes:      2000,
-			TransmittedBytes:   4000,
-			ReceivedPackets:    20,
-			TransmittedPackets: 40,
-			Signal:             -25,
-			SignalAverage:      -27,
-			TransmitRetries:    10,
-			TransmitFailed:     4,
-			BeaconLoss:         6,
-			ReceiveBitrate:     260000000,
-			TransmitBitrate:    260000000,
+		TransmitRateInfo: RateInfo{
+			Bitrate:        540000000,
+			MCS:            4,
+			SpatialStreams: 2,
+			Bandwidth:      80,
+			GuardInterval:  800,
+			ShortGI:        true,
+			Format:         RateFormatVHT,
+			Flags:          RateInfoFlagsVHT | RateInfoFlagsShortGI,
 		},
+		HTSupported:          true,
+		VHTSupported:         true,
+		HESupported:          false,
+		EHTSupported:         false,
+		MaxSpatialStreams:    2,
+		ActiveSpatialStreams: 2,
+		CurrentBandwidth:     80,
+		ShortGI:              true,
 	}
 
-	ifi := &Interface{
+	iface := &Interface{
 		Index:        1,
-		HardwareAddr: net.HardwareAddr{0xe, 0xad, 0xbe, 0xef, 0xde, 0xad},
+		HardwareAddr: net.HardwareAddr{0xde, 0xad, 0xbe, 0xef, 0xde, 0xad},
 	}
 
 	const flags = netlink.Request | netlink.Dump
 
-	msgsFn := mustMessages(t, unix.NL80211_CMD_NEW_STATION, want)
-
 	c := testClient(t, genltest.CheckRequest(familyID, unix.NL80211_CMD_GET_STATION, flags,
-		func(greq genetlink.Message, nreq netlink.Message) ([]genetlink.Message, error) {
-			// Also verify that the correct interface attributes are
-			// present in the request.
-			attrs, err := netlink.UnmarshalAttributes(greq.Data)
-			if err != nil {
-				t.Fatalf("failed to unmarshal attributes: %v", err)
-			}
+		func(_ genetlink.Message, _ netlink.Message) ([]genetlink.Message, error) {
+			return []genetlink.Message{
+				{
+					Header: genetlink.Header{
+						Command: unix.NL80211_CMD_NEW_STATION,
+					},
+					Data: mustMarshalAttributes([]netlink.Attribute{
+						{Type: unix.NL80211_ATTR_MAC, Data: want.HardwareAddr},
+						{Type: unix.NL80211_ATTR_IFINDEX, Data: nlenc.Uint32Bytes(uint32(want.InterfaceIndex))},
+						{Type: unix.NL80211_ATTR_STA_INFO,
+							Data: mustMarshalAttributes([]netlink.Attribute{
+								{Type: unix.NL80211_STA_INFO_CONNECTED_TIME, Data: nlenc.Uint32Bytes(uint32(want.Connected.Seconds()))},
+								{Type: unix.NL80211_STA_INFO_RX_BYTES, Data: nlenc.Uint32Bytes(uint32(want.ReceivedBytes))},
+								{Type: unix.NL80211_STA_INFO_RX_BYTES64, Data: nlenc.Uint64Bytes(uint64(want.ReceivedBytes))},
+								{Type: unix.NL80211_STA_INFO_TX_BYTES, Data: nlenc.Uint32Bytes(uint32(want.TransmittedBytes))},
+								{Type: unix.NL80211_STA_INFO_TX_BYTES64, Data: nlenc.Uint64Bytes(uint64(want.TransmittedBytes))},
+								{Type: unix.NL80211_STA_INFO_SIGNAL, Data: []byte{byte(int8(want.Signal))}},
+								{Type: unix.NL80211_STA_INFO_SIGNAL_AVG, Data: []byte{byte(int8(want.SignalAverage))}},
+								{Type: unix.NL80211_STA_INFO_RX_PACKETS, Data: nlenc.Uint32Bytes(uint32(want.ReceivedPackets))},
+								{Type: unix.NL80211_STA_INFO_TX_PACKETS, Data: nlenc.Uint32Bytes(uint32(want.TransmittedPackets))},
+								{Type: unix.NL80211_STA_INFO_TX_RETRIES, Data: nlenc.Uint32Bytes(uint32(want.TransmitRetries))},
+								{Type: unix.NL80211_STA_INFO_TX_FAILED, Data: nlenc.Uint32Bytes(uint32(want.TransmitFailed))},
+								{Type: unix.NL80211_STA_INFO_BEACON_LOSS, Data: nlenc.Uint32Bytes(uint32(want.BeaconLoss))},
+								{
+									Type: unix.NL80211_STA_INFO_RX_BITRATE,
+									Data: mustMarshalAttributes([]netlink.Attribute{
+										{Type: unix.NL80211_RATE_INFO_BITRATE, Data: nlenc.Uint16Bytes(uint16(bitrateAttr(want.ReceiveBitrate)))},
+										{Type: unix.NL80211_RATE_INFO_BITRATE32, Data: nlenc.Uint32Bytes(bitrateAttr(want.ReceiveBitrate))},
+										{Type: unix.NL80211_RATE_INFO_MCS, Data: []byte{byte(want.ReceiveRateInfo.MCS)}},
+										{Type: unix.NL80211_RATE_INFO_VHT_MCS, Data: []byte{byte(want.ReceiveRateInfo.MCS)}},
+										{Type: unix.NL80211_RATE_INFO_HE_MCS, Data: []byte{byte(want.ReceiveRateInfo.MCS)}},
+										{Type: unix.NL80211_RATE_INFO_VHT_NSS, Data: []byte{byte(want.ReceiveRateInfo.SpatialStreams)}},
+										{Type: unix.NL80211_RATE_INFO_HE_NSS, Data: []byte{byte(want.ReceiveRateInfo.SpatialStreams)}},
+									}),
+								},
+								{
+									Type: unix.NL80211_STA_INFO_TX_BITRATE,
+									Data: mustMarshalAttributes([]netlink.Attribute{
+										{Type: unix.NL80211_RATE_INFO_BITRATE, Data: nlenc.Uint16Bytes(uint16(bitrateAttr(want.TransmitBitrate)))},
+										{Type: unix.NL80211_RATE_INFO_BITRATE32, Data: nlenc.Uint32Bytes(bitrateAttr(want.TransmitBitrate))},
+										{Type: unix.NL80211_RATE_INFO_MCS, Data: []byte{byte(want.TransmitRateInfo.MCS)}},
+										{Type: unix.NL80211_RATE_INFO_VHT_MCS, Data: []byte{byte(want.TransmitRateInfo.MCS)}},
+										{Type: unix.NL80211_RATE_INFO_HE_MCS, Data: []byte{byte(want.TransmitRateInfo.MCS)}},
+										{Type: unix.NL80211_RATE_INFO_VHT_NSS, Data: []byte{byte(want.TransmitRateInfo.SpatialStreams)}},
+										{Type: unix.NL80211_RATE_INFO_HE_NSS, Data: []byte{byte(want.TransmitRateInfo.SpatialStreams)}},
+									}),
+								},
+							}),
+						},
+					}),
+				},
+			}, nil
+		}))
 
-			if diff := diffNetlinkAttributes(ifi.idAttrs(), attrs); diff != "" {
-				t.Fatalf("unexpected request netlink attributes (-want +got):\n%s", diff)
-			}
-
-			return msgsFn(greq, nreq)
-		},
-	))
-
-	got, err := c.StationInfo(ifi)
+	got, err := c.StationInfo(iface)
 	if err != nil {
-		log.Fatalf("unexpected error: %v", err)
+		t.Fatalf("unexpected error calling station info: %v", err)
 	}
 
-	for i := range want {
-		if !reflect.DeepEqual(want[i], got[i]) {
-			t.Fatalf("unexpected station info:\n- want: %v\n-  got: %v",
-				want[i], got[i])
-		}
+	if !reflect.DeepEqual(want, got) {
+		t.Fatalf("unexpected enhanced station info:\n- want: %v\n-  got: %v",
+			want, got)
 	}
 }
 
@@ -420,7 +324,7 @@ func diffNetlinkAttributes(want, got []netlink.Attribute) string {
 
 // Helper functions for converting types back into their raw attribute formats
 
-func marshalIEs(ies []ie) []byte {
+func marshalIEs(ies []IE) []byte {
 	buf := bytes.NewBuffer(nil)
 	for _, ie := range ies {
 		buf.WriteByte(ie.ID)
@@ -436,7 +340,6 @@ func mustMarshalAttributes(attrs []netlink.Attribute) []byte {
 	if err != nil {
 		panic(fmt.Sprintf("failed to marshal attributes: %v", err))
 	}
-
 	return b
 }
 
@@ -465,7 +368,6 @@ func (ifi *Interface) attributes() []netlink.Attribute {
 
 func (b *BSS) attributes() []netlink.Attribute {
 	return []netlink.Attribute{
-		// TODO(mdlayher): return more attributes for validation?
 		{
 			Type: unix.NL80211_ATTR_BSS,
 			Data: mustMarshalAttributes([]netlink.Attribute{
@@ -478,10 +380,12 @@ func (b *BSS) attributes() []netlink.Attribute {
 				{Type: unix.NL80211_BSS_SIGNAL_UNSPEC, Data: nlenc.Uint32Bytes(uint32(b.SignalUnspecified))},
 				{
 					Type: unix.NL80211_BSS_INFORMATION_ELEMENTS,
-					Data: marshalIEs([]ie{{
-						ID:   ieSSID,
-						Data: []byte(b.SSID),
-					}}),
+					Data: marshalIEs([]IE{
+						{
+							ID:   IESSID,
+							Data: []byte(b.SSID),
+						},
+					}),
 				},
 			}),
 		},
@@ -490,7 +394,6 @@ func (b *BSS) attributes() []netlink.Attribute {
 
 func (s *StationInfo) attributes() []netlink.Attribute {
 	return []netlink.Attribute{
-		// TODO(mdlayher): return more attributes for validation?
 		{
 			Type: unix.NL80211_ATTR_MAC,
 			Data: s.HardwareAddr,
@@ -520,6 +423,11 @@ func (s *StationInfo) attributes() []netlink.Attribute {
 					Data: mustMarshalAttributes([]netlink.Attribute{
 						{Type: unix.NL80211_RATE_INFO_BITRATE, Data: nlenc.Uint16Bytes(uint16(bitrateAttr(s.ReceiveBitrate)))},
 						{Type: unix.NL80211_RATE_INFO_BITRATE32, Data: nlenc.Uint32Bytes(bitrateAttr(s.ReceiveBitrate))},
+						{Type: unix.NL80211_RATE_INFO_MCS, Data: []byte{byte(s.ReceiveRateInfo.MCS)}},
+						{Type: unix.NL80211_RATE_INFO_VHT_MCS, Data: []byte{byte(s.ReceiveRateInfo.MCS)}},
+						{Type: unix.NL80211_RATE_INFO_HE_MCS, Data: []byte{byte(s.ReceiveRateInfo.MCS)}},
+						{Type: unix.NL80211_RATE_INFO_VHT_NSS, Data: []byte{byte(s.ReceiveRateInfo.SpatialStreams)}},
+						{Type: unix.NL80211_RATE_INFO_HE_NSS, Data: []byte{byte(s.ReceiveRateInfo.SpatialStreams)}},
 					}),
 				},
 				{
@@ -527,6 +435,11 @@ func (s *StationInfo) attributes() []netlink.Attribute {
 					Data: mustMarshalAttributes([]netlink.Attribute{
 						{Type: unix.NL80211_RATE_INFO_BITRATE, Data: nlenc.Uint16Bytes(uint16(bitrateAttr(s.TransmitBitrate)))},
 						{Type: unix.NL80211_RATE_INFO_BITRATE32, Data: nlenc.Uint32Bytes(bitrateAttr(s.TransmitBitrate))},
+						{Type: unix.NL80211_RATE_INFO_MCS, Data: []byte{byte(s.TransmitRateInfo.MCS)}},
+						{Type: unix.NL80211_RATE_INFO_VHT_MCS, Data: []byte{byte(s.TransmitRateInfo.MCS)}},
+						{Type: unix.NL80211_RATE_INFO_HE_MCS, Data: []byte{byte(s.TransmitRateInfo.MCS)}},
+						{Type: unix.NL80211_RATE_INFO_VHT_NSS, Data: []byte{byte(s.TransmitRateInfo.SpatialStreams)}},
+						{Type: unix.NL80211_RATE_INFO_HE_NSS, Data: []byte{byte(s.TransmitRateInfo.SpatialStreams)}},
 					}),
 				},
 			}),

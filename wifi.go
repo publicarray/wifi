@@ -206,6 +206,30 @@ type Interface struct {
 
 	// The interface's wireless channel width.
 	ChannelWidth ChannelWidth
+
+	// Extended interface capabilities and information.
+	AntennaInfo AntennaInfo
+
+	// Current transmit power information.
+	TXPowerInfo TXPowerInfo
+
+	// Detailed channel information.
+	ChannelInfo ChannelInfo
+
+	// Whether the interface supports monitor mode.
+	MonitorModeSupported bool
+
+	// Whether the interface supports multiple BSS configuration.
+	MultipleBSSSupported bool
+
+	// Whether the interface supports 802.11w (Management Frame Protection).
+	MFPSupported bool
+
+	// Whether the interface supports 802.11r (Fast BSS Transition).
+	FTSupported bool
+
+	// Whether the interface supports 802.11k (Radio Measurement).
+	RadioMeasurementSupported bool
 }
 
 // StationInfo contains statistics about a WiFi interface operating in
@@ -255,6 +279,36 @@ type StationInfo struct {
 
 	// The number of times a beacon loss was detected.
 	BeaconLoss int
+
+	// Enhanced receive rate information.
+	ReceiveRateInfo RateInfo
+
+	// Enhanced transmit rate information.
+	TransmitRateInfo RateInfo
+
+	// Whether the station supports HT (High Throughput).
+	HTSupported bool
+
+	// Whether the station supports VHT (Very High Throughput).
+	VHTSupported bool
+
+	// Whether the station supports HE (High Efficiency - WiFi 6).
+	HESupported bool
+
+	// Whether the station supports EHT (Extremely High Throughput - WiFi 7).
+	EHTSupported bool
+
+	// The maximum number of spatial streams supported.
+	MaxSpatialStreams int
+
+	// The current number of active spatial streams.
+	ActiveSpatialStreams int
+
+	// The current bandwidth in MHz.
+	CurrentBandwidth int
+
+	// Whether short guard interval is active.
+	ShortGI bool
 }
 
 // BSSLoad is an Information Element containing measurements of the load on the BSS.
@@ -321,6 +375,45 @@ type BSS struct {
 
 	// RSN Robust Security Network Information Element (IEEE 802.11 Element ID 48)
 	RSN RSNInfo
+
+	// InformationElements: All 802.11 information elements advertised by this BSS.
+	// This field is populated from NL80211_BSS_INFORMATION_ELEMENTS attribute.
+	// Common IEs include: SSID (0), BSS Load (11), HT Capabilities (45),
+	// VHT Capabilities (191), HE Capabilities (255), TPC Report (38), Country (7), etc.
+	InformationElements []IE
+
+	// Extended BSS capabilities and performance information.
+	ChannelInfo ChannelInfo
+
+	// Antenna and diversity information from the AP.
+	AntennaInfo AntennaInfo
+
+	// Transmit power information from the AP.
+	TXPowerInfo TXPowerInfo
+
+	// Current rate information (last observed data rate).
+	RateInfo RateInfo
+
+	// HT (High Throughput) capabilities if supported.
+	HTCapabilities HTCaps
+
+	// Whether the BSS supports WPS (Wi-Fi Protected Setup).
+	WPSSupported bool
+
+	// Whether the BSS supports WMM (Wi-Fi Multimedia).
+	WMMSupported bool
+
+	// Whether the BSS is operating in a DFS channel.
+	DFSChannel bool
+
+	// The country code regulatory information.
+	CountryCode string
+
+	// The maximum number of clients supported by this AP.
+	MaxClients int
+
+	// The current number of connected clients.
+	CurrentClients int
 }
 
 // A BSSStatus indicates the current status of client within a BSS.
@@ -358,24 +451,172 @@ func (s BSSStatus) String() string {
 
 // List of 802.11 Information Element types.
 const (
-	ieSSID    = 0
-	ieBSSLoad = 11
-	ieRSN     = 48 // Robust Security Network
+	IESSID   = 0
+	IEBSLoad = 11
+	IERSN    = 48 // Robust Security Network
 )
 
-// An ie is an 802.11 information element.
-type ie struct {
+// An IE is an 802.11 information element.
+type IE struct {
 	ID uint8
 	// Length field implied by length of data
 	Data []byte
+}
+
+// Deprecated: use IE instead.
+type ie = IE
+
+// ScanRequest contains parameters for enhanced WiFi scanning.
+type ScanRequest struct {
+	// The interface to scan on.
+	Interface *Interface
+
+	// SSIDs to scan for (empty means scan all).
+	SSIDs []string
+
+	// Frequencies to scan on (empty means scan all).
+	Frequencies []int
+
+	// Channels to scan on (derived from frequencies if not specified).
+	Channels []int
+
+	// Scan type: active or passive.
+	Type ScanType
+
+	// Duration of passive scan in TUs.
+	PassiveDwellTime time.Duration
+
+	// Duration of active scan in TUs.
+	ActiveDwellTime time.Duration
+
+	// Whether to include scan results with hidden SSIDs.
+	IncludeHidden bool
+
+	// Whether to flush previous scan results.
+	FlushPrevious bool
+
+	// Maximum scan duration.
+	MaxScanTime time.Duration
+
+	// Custom IEs to include in probe requests.
+	CustomIEs []IE
+}
+
+// ScanType specifies the type of WiFi scan.
+type ScanType int
+
+const (
+	ScanTypeActive ScanType = iota
+	ScanTypePassive
+)
+
+// ScanResult contains detailed scan results for a BSS.
+type ScanResult struct {
+	*BSS
+
+	// Scan-specific information.
+	ScanTime time.Time
+
+	// The scan request that produced this result.
+	ScanRequest *ScanRequest
+
+	// Whether this is a hidden network.
+	Hidden bool
+
+	// The scan frequency in MHz.
+	ScanFrequency int
+
+	// Whether the BSS was found via active or passive scan.
+	ScanType ScanType
+
+	// The signal quality rating (0-100).
+	SignalQuality int
+
+	// The estimated distance to the AP in meters.
+	EstimatedDistance int
+
+	// The round-trip time to the AP.
+	RoundTripTime time.Duration
+
+	// Whether the BSS supports mesh networking.
+	MeshSupported bool
+
+	// The mesh ID if this is a mesh network.
+	MeshID string
+
+	// The mesh configuration if available.
+	MeshConfig *MeshConfig
+}
+
+// MeshConfig contains mesh network configuration.
+type MeshConfig struct {
+	// The mesh ID.
+	ID string
+
+	// The mesh peer count.
+	PeerCount int
+
+	// Whether mesh power save is enabled.
+	PowerSave bool
+
+	// The mesh sync method.
+	SyncMethod int
+
+	// The mesh authentication protocol.
+	AuthProtocol int
+
+	// The mesh formation protocol.
+	FormationProtocol int
+
+	// The path selection protocol.
+	PathSelectionProtocol int
+}
+
+// ChannelCapability contains channel capability information.
+type ChannelCapability struct {
+	// The channel number.
+	Channel int
+
+	// The frequency in MHz.
+	Frequency int
+
+	// The channel width capabilities.
+	SupportedWidths []ChannelWidth
+
+	// Whether the channel supports ad-hoc mode.
+	AdHocSupported bool
+
+	// Whether the channel supports infrastructure mode.
+	InfrastructureSupported bool
+
+	// Whether the channel supports monitor mode.
+	MonitorSupported bool
+
+	// Whether the channel supports AP mode.
+	APSupported bool
+
+	// Whether the channel supports mesh mode.
+	MeshSupported bool
+
+	// Whether the channel requires DFS.
+	DFSRequired bool
+
+	// The regulatory domain for this channel.
+	RegulatoryDomain string
+
+	// The maximum regulatory power in mBm.
+	MaxRegPower int
+
+	// The antenna gain constraint in dBi.
+	AntennaGainConstraint int
 }
 
 // parseIEs parses zero or more ies from a byte slice.
 // Reference:
 //
 //	https://www.safaribooksonline.com/library/view/80211-wireless-networks/0596100523/ch04.html#wireless802dot112-CHP-4-FIG-31
-func parseIEs(b []byte) ([]ie, error) {
-	var ies []ie
+func parseIEs(b []byte) ([]IE, error) {
+	var ies []IE
 	var i int
 	for len(b[i:]) != 0 {
 
@@ -392,7 +633,7 @@ func parseIEs(b []byte) ([]ie, error) {
 			return nil, errInvalidIE
 		}
 
-		ies = append(ies, ie{
+		ies = append(ies, IE{
 			ID:   id,
 			Data: b[i : i+l],
 		})
@@ -401,6 +642,62 @@ func parseIEs(b []byte) ([]ie, error) {
 	}
 
 	return ies, nil
+}
+
+type HTCaps struct {
+	HTCapable         bool
+	LDPCoding         bool
+	SMPSDisabled      bool
+	HTGreenfield      bool
+	ShortGI40MHz      bool
+	SIGInterval40     bool
+	TxSTBC            bool
+	RxSTBC            bool
+	DelayedBA         bool
+	MaxAMSDU          uint8
+	MinAMSDU          uint8
+	MaxAMPDU          uint8
+	MinAMPDU          uint8
+	MaxRxAMPDUFactor  uint8
+	MPDUDensity       uint8
+	LSIGTPCProtection bool
+	rxMIMO            uint8
+	txMIMO            uint8
+	MCSRateSet        uint16
+	ChannelWidth      uint8
+	Powersave         uint8
+	SMPS              bool
+	RXNSS             uint8
+}
+
+type TxPowerReport struct {
+	TxPower int8
+}
+
+type CountryInfo struct {
+	CountryCode string
+}
+
+type VendorSpecific struct {
+	OUI    []byte
+	IEType uint8
+	IEData []byte
+}
+
+type BSSColor struct {
+	Part1      uint8
+	Part2      uint8
+	Part3      uint8
+	BSSColorID uint8
+}
+
+type OBSSPDP struct {
+	Enable bool
+}
+
+type MUConfig struct {
+	TXMU bool
+	RXMU bool
 }
 
 type SurveyInfo struct {
@@ -439,7 +736,162 @@ type SurveyInfo struct {
 
 	// Indicates if the channel is currently in use.
 	InUse bool
+
+	// The channel number (derived from frequency).
+	Channel int
+
+	// The maximum transmit power allowed on this channel in mBm.
+	MaxTXPower int
 }
+
+// ChannelInfo contains detailed information about a WiFi channel.
+type ChannelInfo struct {
+	// The channel number.
+	Channel int
+
+	// The frequency in MHz.
+	Frequency int
+
+	// The channel width.
+	Width ChannelWidth
+
+	// The center frequency 1 (for 40+80, 80+80, 160 MHz channels).
+	CenterFreq1 int
+
+	// The center frequency 2 (for 80+80 MHz channels).
+	CenterFreq2 int
+
+	// The maximum transmit power allowed on this channel in mBm.
+	MaxTXPower int
+
+	// The minimum transmit power allowed on this channel in mBm.
+	MinTXPower int
+
+	// Whether the channel can be used for DFS (Dynamic Frequency Selection).
+	DFSRequired bool
+
+	// Whether the channel is currently marked for radar detection.
+	RadarDetected bool
+
+	// Whether the channel supports HT (High Throughput).
+	HTSupported bool
+
+	// Whether the channel supports VHT (Very High Throughput).
+	VHTSupported bool
+
+	// Whether the channel supports HE (High Efficiency - WiFi 6).
+	HESupported bool
+
+	// The maximum number of spatial streams supported on this channel.
+	MaxSpatialStreams int
+
+	// The maximum MPDU length supported.
+	MaxMPDULength int
+}
+
+// AntennaInfo contains antenna configuration and capabilities.
+type AntennaInfo struct {
+	// The number of available transmit antennas.
+	TxAntennas int
+
+	// The number of available receive antennas.
+	RxAntennas int
+
+	// The currently active transmit antenna mask (bitmask).
+	TxAntennaMask uint32
+
+	// The currently active receive antenna mask (bitmask).
+	RxAntennaMask uint32
+
+	// Whether antenna diversity is supported.
+	DiversitySupported bool
+
+	// Whether antenna selection is supported.
+	SelectionSupported bool
+
+	// The currently selected antenna index.
+	SelectedAntenna int
+}
+
+// TXPowerInfo contains detailed transmit power information.
+type TXPowerInfo struct {
+	// The current transmit power in mBm.
+	TXPower int
+
+	// The maximum transmit power in mBm.
+	MaxTXPower int
+
+	// The minimum transmit power in mBm.
+	MinTXPower int
+
+	// The current transmit power in dBm.
+	TXPowerdBm int
+
+	// Whether automatic power control is enabled.
+	AutoPowerControl bool
+
+	// The power limit in mBm.
+	PowerLimit int
+
+	// The regulatory maximum power in mBm.
+	RegMaxPower int
+
+	// The target power in mBm.
+	TargetPower int
+}
+
+// RateInfo contains detailed rate information.
+type RateInfo struct {
+	// The bitrate in bits per second.
+	Bitrate int
+
+	// The flags indicating rate properties.
+	Flags RateInfoFlags
+
+	// The MCS (Modulation and Coding Scheme) index.
+	MCS int
+
+	// The number of spatial streams.
+	SpatialStreams int
+
+	// The bandwidth in MHz.
+	Bandwidth int
+
+	// The guard interval in nanoseconds.
+	GuardInterval int
+
+	// Whether short guard interval is enabled.
+	ShortGI bool
+
+	// The HT/VHT/HE format.
+	Format RateFormat
+}
+
+// RateInfoFlags contains flags for rate information.
+type RateInfoFlags int
+
+const (
+	RateInfoFlagsMCS RateInfoFlags = 1 << iota
+	RateInfoFlagsVHT
+	RateInfoFlagsShortGI
+	RateInfoFlagsHT40
+	RateInfoFlagsHE
+	RateInfoFlagsEHT
+	RateInfoFlags320MHz
+	RateInfoFlags10MHz
+	RateInfoFlags5MHz
+)
+
+// RateFormat specifies the WiFi format.
+type RateFormat int
+
+const (
+	RateFormatLegacy RateFormat = iota
+	RateFormatHT
+	RateFormatVHT
+	RateFormatHE
+	RateFormatEHT
+)
 
 // RSNCipher represents a cipher suite in RSN IE.
 // Values correspond to OUIs (00-0F-AC-XX) in the wire format as defined in

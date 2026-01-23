@@ -144,10 +144,13 @@ func (c *client) ConnectWPAPSK(ifi *Interface, ssid, psk string) error {
 		netlink.Acknowledge,
 		ifi,
 		func(ae *netlink.AttributeEncoder) {
-			// TODO(mdlayher): document these or build from bitflags.
+			// Use WPA2-CCMP (AES) cipher suite and PSK authentication
+			// These are the standard OUI-based values defined in IEEE 802.11-2020
 			const (
-				cipherSuites = 0xfac04
-				akmSuites    = 0xfac02
+				// CCMP-128 (AES) cipher suite - 00-0F-AC-04 in hex, matches RSNCipherCCMP128
+				cipherSuites = 0x000FAC04
+				// PSK authentication suite - 00-0F-AC-02 in hex, matches RSNAkmPSK
+				akmSuites = 0x000FAC02
 			)
 
 			ae.Bytes(unix.NL80211_ATTR_SSID, []byte(ssid))
@@ -649,21 +652,22 @@ func (b *BSS) parseAttributes(attrs []netlink.Attribute) error {
 				return err
 			}
 
-			// TODO(mdlayher): return more IEs if they end up being generally useful
+			b.InformationElements = ies
+
 			for _, ie := range ies {
 				switch ie.ID {
-				case ieSSID:
+				case IESSID:
 					b.SSID = decodeSSID(ie.Data)
-				case ieBSSLoad:
+				case IEBSLoad:
 					Bssload, err := decodeBSSLoad(ie.Data)
 					if err != nil {
-						continue // This IE is malformed
+						continue
 					}
 					b.Load = *Bssload
-				case ieRSN:
+				case IERSN:
 					rsnInfo, err := decodeRSN(ie.Data)
 					if err != nil {
-						continue // This IE is malformed
+						continue
 					}
 					b.RSN = *rsnInfo
 				}
@@ -745,13 +749,73 @@ func (info *StationInfo) parseAttributes(attrs []netlink.Attribute) error {
 				return err
 			}
 
-			// TODO(mdlayher): return more statistics if they end up being
-			// generally useful
 			switch a.Type {
 			case unix.NL80211_STA_INFO_RX_BITRATE:
 				info.ReceiveBitrate = rate.Bitrate
+				info.ReceiveRateInfo = RateInfo{
+					Bitrate:        rate.Bitrate,
+					MCS:            rate.MCS,
+					SpatialStreams: rate.SpatialStreams,
+					Bandwidth:      rate.Bandwidth,
+					GuardInterval:  rate.GuardInterval,
+					ShortGI:        rate.ShortGI,
+					Format:         rate.Format,
+					Flags:          rate.Flags,
+				}
+				if rate.Format == RateFormatHT {
+					info.HTSupported = true
+				} else if rate.Format == RateFormatVHT {
+					info.HTSupported = true
+					info.VHTSupported = true
+				} else if rate.Format == RateFormatHE {
+					info.HTSupported = true
+					info.VHTSupported = true
+					info.HESupported = true
+				} else if rate.Format == RateFormatEHT {
+					info.HTSupported = true
+					info.VHTSupported = true
+					info.HESupported = true
+					info.EHTSupported = true
+				}
+				if rate.SpatialStreams > info.MaxSpatialStreams {
+					info.MaxSpatialStreams = rate.SpatialStreams
+				}
+				info.ActiveSpatialStreams = rate.SpatialStreams
+				info.CurrentBandwidth = rate.Bandwidth
+				info.ShortGI = rate.ShortGI
 			case unix.NL80211_STA_INFO_TX_BITRATE:
 				info.TransmitBitrate = rate.Bitrate
+				info.TransmitRateInfo = RateInfo{
+					Bitrate:        rate.Bitrate,
+					MCS:            rate.MCS,
+					SpatialStreams: rate.SpatialStreams,
+					Bandwidth:      rate.Bandwidth,
+					GuardInterval:  rate.GuardInterval,
+					ShortGI:        rate.ShortGI,
+					Format:         rate.Format,
+					Flags:          rate.Flags,
+				}
+				if rate.Format == RateFormatHT {
+					info.HTSupported = true
+				} else if rate.Format == RateFormatVHT {
+					info.HTSupported = true
+					info.VHTSupported = true
+				} else if rate.Format == RateFormatHE {
+					info.HTSupported = true
+					info.VHTSupported = true
+					info.HESupported = true
+				} else if rate.Format == RateFormatEHT {
+					info.HTSupported = true
+					info.VHTSupported = true
+					info.HESupported = true
+					info.EHTSupported = true
+				}
+				if rate.SpatialStreams > info.MaxSpatialStreams {
+					info.MaxSpatialStreams = rate.SpatialStreams
+				}
+				info.ActiveSpatialStreams = rate.SpatialStreams
+				info.CurrentBandwidth = rate.Bandwidth
+				info.ShortGI = rate.ShortGI
 			}
 		}
 
@@ -774,6 +838,27 @@ func (info *StationInfo) parseAttributes(attrs []netlink.Attribute) error {
 type rateInfo struct {
 	// Bitrate in bits per second.
 	Bitrate int
+
+	// MCS (Modulation and Coding Scheme) index for HT/VHT/HE.
+	MCS int
+
+	// Number of spatial streams.
+	SpatialStreams int
+
+	// Bandwidth in MHz.
+	Bandwidth int
+
+	// Guard interval in nanoseconds.
+	GuardInterval int
+
+	// Whether short guard interval is enabled.
+	ShortGI bool
+
+	// Format of the rate (legacy, HT, VHT, HE, etc.).
+	Format RateFormat
+
+	// Flags indicating rate properties.
+	Flags RateInfoFlags
 }
 
 // parseRateInfo parses a rateInfo from netlink attributes.
@@ -788,13 +873,80 @@ func parseRateInfo(b []byte) (*rateInfo, error) {
 		switch a.Type {
 		case unix.NL80211_RATE_INFO_BITRATE32:
 			info.Bitrate = int(nlenc.Uint32(a.Data))
-		}
-
-		// Only use 16-bit counters if the 32-bit counters are not present.
-		// If the 32-bit counters appear later in the slice, they will overwrite
-		// these values.
-		if info.Bitrate == 0 && a.Type == unix.NL80211_RATE_INFO_BITRATE {
-			info.Bitrate = int(nlenc.Uint16(a.Data))
+		case unix.NL80211_RATE_INFO_BITRATE:
+			if info.Bitrate == 0 {
+				info.Bitrate = int(nlenc.Uint16(a.Data))
+			}
+		case unix.NL80211_RATE_INFO_MCS:
+			if len(a.Data) >= 1 {
+				info.MCS = int(a.Data[0])
+				info.Flags |= RateInfoFlagsMCS
+			}
+		case unix.NL80211_RATE_INFO_VHT_MCS:
+			if len(a.Data) >= 1 {
+				info.MCS = int(a.Data[0])
+				info.Flags |= RateInfoFlagsVHT
+				info.Format = RateFormatVHT
+			}
+		case unix.NL80211_RATE_INFO_VHT_NSS:
+			if len(a.Data) >= 1 {
+				info.SpatialStreams = int(a.Data[0])
+			}
+		case unix.NL80211_RATE_INFO_HE_MCS:
+			if len(a.Data) >= 1 {
+				info.MCS = int(a.Data[0])
+				info.Flags |= RateInfoFlagsHE
+				info.Format = RateFormatHE
+			}
+		case unix.NL80211_RATE_INFO_HE_NSS:
+			if len(a.Data) >= 1 {
+				info.SpatialStreams = int(a.Data[0])
+			}
+		case unix.NL80211_RATE_INFO_HE_GI:
+			if len(a.Data) >= 1 {
+				gi := a.Data[0]
+				if gi == 1 {
+					info.GuardInterval = 1600
+				} else if gi == 2 {
+					info.GuardInterval = 800
+				}
+			}
+		case unix.NL80211_RATE_INFO_HE_DCM:
+			if len(a.Data) >= 1 {
+				flags := a.Data[0]
+				if flags&0x01 != 0 {
+					info.Flags |= RateInfoFlagsHE
+				}
+			}
+		case unix.NL80211_RATE_INFO_5_MHZ_WIDTH:
+			info.Bandwidth = 5
+			info.Flags |= RateInfoFlags5MHz
+		case unix.NL80211_RATE_INFO_10_MHZ_WIDTH:
+			info.Bandwidth = 10
+			info.Flags |= RateInfoFlags10MHz
+		case unix.NL80211_RATE_INFO_40_MHZ_WIDTH:
+			info.Bandwidth = 40
+			info.Flags |= RateInfoFlagsHT40
+		case unix.NL80211_RATE_INFO_80_MHZ_WIDTH:
+			info.Bandwidth = 80
+		case unix.NL80211_RATE_INFO_160_MHZ_WIDTH:
+			info.Bandwidth = 160
+		case unix.NL80211_RATE_INFO_320_MHZ_WIDTH:
+			info.Bandwidth = 320
+			info.Flags |= RateInfoFlags320MHz
+		case unix.NL80211_RATE_INFO_SHORT_GI:
+			info.ShortGI = true
+			info.Flags |= RateInfoFlagsShortGI
+		case unix.NL80211_RATE_INFO_EHT_MCS:
+			if len(a.Data) >= 1 {
+				info.MCS = int(a.Data[0])
+				info.Flags |= RateInfoFlagsEHT
+				info.Format = RateFormatEHT
+			}
+		case unix.NL80211_RATE_INFO_EHT_NSS:
+			if len(a.Data) >= 1 {
+				info.SpatialStreams = int(a.Data[0])
+			}
 		}
 	}
 
