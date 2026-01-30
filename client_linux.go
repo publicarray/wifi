@@ -672,10 +672,62 @@ func (b *BSS) parseAttributes(attrs []netlink.Attribute) error {
 					b.RSN = *rsnInfo
 				}
 			}
+		case unix.NL80211_BSS_BEACON_IES:
+			ies, err := parseIEs(a.Data)
+			if err != nil {
+				return err
+			}
+
+			b.InformationElements = mergeIEs(b.InformationElements, ies)
+
+			for _, ie := range ies {
+				switch ie.ID {
+				case IESSID:
+					if b.SSID == "" {
+						b.SSID = decodeSSID(ie.Data)
+					}
+				case IEBSLoad:
+					if b.Load.StationCount == 0 && b.Load.ChannelUtilization == 0 {
+						Bssload, err := decodeBSSLoad(ie.Data)
+						if err != nil {
+							continue
+						}
+						b.Load = *Bssload
+					}
+				case IERSN:
+					if !b.RSN.IsInitialized() {
+						rsnInfo, err := decodeRSN(ie.Data)
+						if err != nil {
+							continue
+						}
+						b.RSN = *rsnInfo
+					}
+				}
+			}
 		}
 	}
 
 	return nil
+}
+
+func mergeIEs(dst, src []IE) []IE {
+	if len(src) == 0 {
+		return dst
+	}
+	if len(dst) == 0 {
+		return src
+	}
+	seen := make(map[uint8]struct{}, len(dst))
+	for _, ie := range dst {
+		seen[ie.ID] = struct{}{}
+	}
+	for _, ie := range src {
+		if _, exists := seen[ie.ID]; !exists {
+			dst = append(dst, ie)
+			seen[ie.ID] = struct{}{}
+		}
+	}
+	return dst
 }
 
 // ParseStationInfo parses StationInfo attributes from a byte slice of
