@@ -337,6 +337,13 @@ func (c *client) Scan(ctx context.Context, ifi *Interface) error {
 		Data: data,
 	}
 
+	flags := netlink.Request | netlink.Acknowledge
+
+	_, err = conn.Send(req, family.ID, flags)
+	if err != nil {
+		return err
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -348,16 +355,7 @@ func (c *client) Scan(ctx context.Context, ifi *Interface) error {
 
 	}(ctx, conn, ifi.Index, c.familyVersion, result)
 
-	flags := netlink.Request | netlink.Acknowledge
-
-	_, err = conn.Send(req, family.ID, flags)
-	if err != nil {
-		cancel()
-	}
-
-	err2 := <-result
-
-	return errors.Join(err, err2)
+	return <-result
 }
 
 // SetDeadline sets the read and write deadlines associated with the connection.
@@ -478,7 +476,6 @@ func listenNewScanResults(ctx context.Context, conn *genetlink.Conn, ifiIndex in
 
 // parseGetScanResult parses all the BSS from nl80211 CMD_GET_SCAN response messages.
 func parseGetScanResult(msgs []genetlink.Message) ([]*BSS, error) {
-	// reimplementing https://github.com/mdlayher/wifi/pull/79
 	bsss := make([]*BSS, 0, len(msgs))
 	for _, m := range msgs {
 		attrs, err := netlink.UnmarshalAttributes(m.Data)
@@ -486,7 +483,6 @@ func parseGetScanResult(msgs []genetlink.Message) ([]*BSS, error) {
 			return nil, err
 		}
 
-		var bss BSS
 		for _, a := range attrs {
 			if a.Type != unix.NL80211_ATTR_BSS {
 				continue
@@ -497,6 +493,7 @@ func parseGetScanResult(msgs []genetlink.Message) ([]*BSS, error) {
 				return nil, err
 			}
 
+			var bss BSS
 			if !attrsContain(nattrs, unix.NL80211_BSS_STATUS) {
 				bss.Status = BSSStatusNotAssociated
 			}
@@ -504,8 +501,8 @@ func parseGetScanResult(msgs []genetlink.Message) ([]*BSS, error) {
 			if err := (&bss).parseAttributes(nattrs); err != nil {
 				continue
 			}
+			bsss = append(bsss, &bss)
 		}
-		bsss = append(bsss, &bss)
 	}
 	return bsss, nil
 }
@@ -933,6 +930,9 @@ func parseRateInfo(b []byte) (*rateInfo, error) {
 			if len(a.Data) >= 1 {
 				info.MCS = int(a.Data[0])
 				info.Flags |= RateInfoFlagsMCS
+				if info.Format == RateFormatLegacy {
+					info.Format = RateFormatHT
+				}
 			}
 		case unix.NL80211_RATE_INFO_VHT_MCS:
 			if len(a.Data) >= 1 {
@@ -957,10 +957,13 @@ func parseRateInfo(b []byte) (*rateInfo, error) {
 		case unix.NL80211_RATE_INFO_HE_GI:
 			if len(a.Data) >= 1 {
 				gi := a.Data[0]
-				if gi == 1 {
-					info.GuardInterval = 1600
-				} else if gi == 2 {
+				switch gi {
+				case 0:
 					info.GuardInterval = 800
+				case 1:
+					info.GuardInterval = 1600
+				case 2:
+					info.GuardInterval = 3200
 				}
 			}
 		case unix.NL80211_RATE_INFO_HE_DCM:

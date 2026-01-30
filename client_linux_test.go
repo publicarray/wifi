@@ -66,14 +66,15 @@ func TestLinux_clientStationInfoBasicEnhanced(t *testing.T) {
 		ReceiveRateInfo: RateInfo{
 			Bitrate: 650000000,
 			MCS:     7,
-			Format:  RateFormatVHT,
-			Flags:   RateInfoFlagsVHT,
+			Format:  RateFormatHE,
+			Flags:   RateInfoFlagsMCS | RateInfoFlagsVHT | RateInfoFlagsHE,
 		},
 		HTSupported:  true,
 		VHTSupported: true,
-		HESupported:  false,
+		HESupported:  true,
 		EHTSupported: false,
 	}
+	wantSlice := []*StationInfo{want}
 
 	iface := &Interface{
 		Index:        1,
@@ -125,9 +126,9 @@ func TestLinux_clientStationInfoBasicEnhanced(t *testing.T) {
 		t.Fatalf("unexpected error calling station info: %v", err)
 	}
 
-	if !reflect.DeepEqual(want, got) {
+	if !reflect.DeepEqual(wantSlice, got) {
 		t.Fatalf("unexpected enhanced station info:\n- want: %v\n-  got: %v",
-			want, got)
+			wantSlice, got)
 	}
 }
 
@@ -155,8 +156,8 @@ func TestLinux_clientStationInfoEnhanced(t *testing.T) {
 			Bandwidth:      80,
 			GuardInterval:  800,
 			ShortGI:        true,
-			Format:         RateFormatVHT,
-			Flags:          RateInfoFlagsVHT | RateInfoFlagsShortGI,
+			Format:         RateFormatHE,
+			Flags:          RateInfoFlagsMCS | RateInfoFlagsVHT | RateInfoFlagsHE | RateInfoFlagsShortGI,
 		},
 		TransmitRateInfo: RateInfo{
 			Bitrate:        540000000,
@@ -165,18 +166,19 @@ func TestLinux_clientStationInfoEnhanced(t *testing.T) {
 			Bandwidth:      80,
 			GuardInterval:  800,
 			ShortGI:        true,
-			Format:         RateFormatVHT,
-			Flags:          RateInfoFlagsVHT | RateInfoFlagsShortGI,
+			Format:         RateFormatHE,
+			Flags:          RateInfoFlagsMCS | RateInfoFlagsVHT | RateInfoFlagsHE | RateInfoFlagsShortGI,
 		},
 		HTSupported:          true,
 		VHTSupported:         true,
-		HESupported:          false,
+		HESupported:          true,
 		EHTSupported:         false,
 		MaxSpatialStreams:    2,
 		ActiveSpatialStreams: 2,
 		CurrentBandwidth:     80,
 		ShortGI:              true,
 	}
+	wantSlice := []*StationInfo{want}
 
 	iface := &Interface{
 		Index:        1,
@@ -198,6 +200,7 @@ func TestLinux_clientStationInfoEnhanced(t *testing.T) {
 						{Type: unix.NL80211_ATTR_STA_INFO,
 							Data: mustMarshalAttributes([]netlink.Attribute{
 								{Type: unix.NL80211_STA_INFO_CONNECTED_TIME, Data: nlenc.Uint32Bytes(uint32(want.Connected.Seconds()))},
+								{Type: unix.NL80211_STA_INFO_INACTIVE_TIME, Data: nlenc.Uint32Bytes(uint32(want.Inactive.Seconds() * 1000))},
 								{Type: unix.NL80211_STA_INFO_RX_BYTES, Data: nlenc.Uint32Bytes(uint32(want.ReceivedBytes))},
 								{Type: unix.NL80211_STA_INFO_RX_BYTES64, Data: nlenc.Uint64Bytes(uint64(want.ReceivedBytes))},
 								{Type: unix.NL80211_STA_INFO_TX_BYTES, Data: nlenc.Uint32Bytes(uint32(want.TransmittedBytes))},
@@ -217,8 +220,11 @@ func TestLinux_clientStationInfoEnhanced(t *testing.T) {
 										{Type: unix.NL80211_RATE_INFO_MCS, Data: []byte{byte(want.ReceiveRateInfo.MCS)}},
 										{Type: unix.NL80211_RATE_INFO_VHT_MCS, Data: []byte{byte(want.ReceiveRateInfo.MCS)}},
 										{Type: unix.NL80211_RATE_INFO_HE_MCS, Data: []byte{byte(want.ReceiveRateInfo.MCS)}},
+										{Type: unix.NL80211_RATE_INFO_HE_GI, Data: []byte{0}},
+										{Type: unix.NL80211_RATE_INFO_80_MHZ_WIDTH, Data: []byte{}},
 										{Type: unix.NL80211_RATE_INFO_VHT_NSS, Data: []byte{byte(want.ReceiveRateInfo.SpatialStreams)}},
 										{Type: unix.NL80211_RATE_INFO_HE_NSS, Data: []byte{byte(want.ReceiveRateInfo.SpatialStreams)}},
+										{Type: unix.NL80211_RATE_INFO_SHORT_GI, Data: []byte{}},
 									}),
 								},
 								{
@@ -229,8 +235,11 @@ func TestLinux_clientStationInfoEnhanced(t *testing.T) {
 										{Type: unix.NL80211_RATE_INFO_MCS, Data: []byte{byte(want.TransmitRateInfo.MCS)}},
 										{Type: unix.NL80211_RATE_INFO_VHT_MCS, Data: []byte{byte(want.TransmitRateInfo.MCS)}},
 										{Type: unix.NL80211_RATE_INFO_HE_MCS, Data: []byte{byte(want.TransmitRateInfo.MCS)}},
+										{Type: unix.NL80211_RATE_INFO_HE_GI, Data: []byte{0}},
+										{Type: unix.NL80211_RATE_INFO_80_MHZ_WIDTH, Data: []byte{}},
 										{Type: unix.NL80211_RATE_INFO_VHT_NSS, Data: []byte{byte(want.TransmitRateInfo.SpatialStreams)}},
 										{Type: unix.NL80211_RATE_INFO_HE_NSS, Data: []byte{byte(want.TransmitRateInfo.SpatialStreams)}},
+										{Type: unix.NL80211_RATE_INFO_SHORT_GI, Data: []byte{}},
 									}),
 								},
 							}),
@@ -245,9 +254,56 @@ func TestLinux_clientStationInfoEnhanced(t *testing.T) {
 		t.Fatalf("unexpected error calling station info: %v", err)
 	}
 
-	if !reflect.DeepEqual(want, got) {
+	if !reflect.DeepEqual(wantSlice, got) {
 		t.Fatalf("unexpected enhanced station info:\n- want: %v\n-  got: %v",
-			want, got)
+			wantSlice, got)
+	}
+}
+
+func Test_parseRateInfoHTFormatFromMCS(t *testing.T) {
+	b := mustMarshalAttributes([]netlink.Attribute{
+		{Type: unix.NL80211_RATE_INFO_MCS, Data: []byte{7}},
+		{Type: unix.NL80211_RATE_INFO_BITRATE32, Data: nlenc.Uint32Bytes(1)},
+	})
+
+	info, err := parseRateInfo(b)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if info.Format != RateFormatHT {
+		t.Fatalf("unexpected format:\n- want: %v\n-  got: %v", RateFormatHT, info.Format)
+	}
+	if info.Flags&RateInfoFlagsMCS == 0 {
+		t.Fatalf("expected MCS flag to be set, got: %v", info.Flags)
+	}
+}
+
+func Test_parseRateInfoHEGuardInterval(t *testing.T) {
+	tests := []struct {
+		name string
+		gi   byte
+		want int
+	}{
+		{name: "0.8us", gi: 0, want: 800},
+		{name: "1.6us", gi: 1, want: 1600},
+		{name: "3.2us", gi: 2, want: 3200},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := mustMarshalAttributes([]netlink.Attribute{
+				{Type: unix.NL80211_RATE_INFO_HE_GI, Data: []byte{tt.gi}},
+			})
+
+			info, err := parseRateInfo(b)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if info.GuardInterval != tt.want {
+				t.Fatalf("unexpected guard interval:\n- want: %d\n-  got: %d", tt.want, info.GuardInterval)
+			}
+		})
 	}
 }
 
@@ -564,7 +620,7 @@ func Test_decodeBSSLoadError(t *testing.T) {
 	}
 }
 
-func TestLinux_clientSurveryInfoMissingAttributeIsNotExist(t *testing.T) {
+func TestLinux_clientSurveyInfoMissingAttributeIsNotExist(t *testing.T) {
 	c := testClient(t, func(_ genetlink.Message, _ netlink.Message) ([]genetlink.Message, error) {
 		// One message without station info attribute
 		return []genetlink.Message{{
@@ -578,7 +634,7 @@ func TestLinux_clientSurveryInfoMissingAttributeIsNotExist(t *testing.T) {
 		}}, nil
 	})
 
-	_, err := c.StationInfo(&Interface{
+	_, err := c.SurveyInfo(&Interface{
 		Index:        1,
 		HardwareAddr: net.HardwareAddr{0xe, 0xad, 0xbe, 0xef, 0xde, 0xad},
 	})
